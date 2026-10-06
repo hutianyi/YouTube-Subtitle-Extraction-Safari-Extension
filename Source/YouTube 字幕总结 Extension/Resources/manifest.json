@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Subtitle Extraction Safari Extension",
+  "description": "一键提取当前 YouTube 视频的字幕，优先英语、其次中文，并复制完整总结提示词。",
+  "version": "1.0.7",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "scripting",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "*://*.youtube.com/*",
+    "*://youtu.be/*",
+    "https://chatgpt.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "提取字幕并复制完整提示词",
+    "default_icon": "images/icon.svg"
+  },
+  "icons": {
+    "512": "images/icon.svg"
+  }
+}

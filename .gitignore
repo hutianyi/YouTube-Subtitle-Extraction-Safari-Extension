@@ -1,0 +1,41 @@
+# macOS metadata
+.DS_Store
+._*
+.AppleDouble/
+
+# Build products and logs
+build/
+DerivedData/
+*.app/
+*.appex/
+*.dSYM/
+*.xcarchive/
+*.xcresult/
+*.log
+
+# User-specific IDE state
+xcuserdata/
+*.xcuserstate
+
+# Credentials and signing material
+.env
+.env.*
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.mobileprovision
+*.provisionprofile
+
+# Browser data and local extraction artifacts
+cookies*.txt
+*cookie*.sqlite*
+metadata.json
+transcript*.txt
+subtitle.*
+
+# Language caches
+__pycache__/
+*.pyc
+node_modules/
