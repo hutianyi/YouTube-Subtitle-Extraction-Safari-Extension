@@ -43,9 +43,17 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
             )
             let taskData = try JSONSerialization.data(withJSONObject: [
                 "jobId": jobID,
-                "url": videoURL
+                "url": videoURL,
+                "cookies": message["cookies"] as? [[String: Any]] ?? []
             ])
+            guard taskData.count <= 256_000 else {
+                throw NSError(domain: "YouTubeSubtitleSummary", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "登录数据超过允许的任务大小。"])
+            }
             try taskData.write(to: taskFileURL, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: taskFileURL.path
+            )
         } catch {
             complete(context, payload: [
                 "ok": false,

@@ -19,6 +19,8 @@ browser.action.onClicked.addListener(async (tab) => {
     return;
   }
 
+  // 权限请求紧接工具栏点击，保留浏览器要求的用户手势。
+  const cookiePromise = readYouTubeCookies(tab);
   const jobId = createJobID();
   const timeout = setTimeout(() => {
     failJob(jobId, "字幕提取等待超时，请再试一次");
@@ -29,10 +31,15 @@ browser.action.onClicked.addListener(async (tab) => {
   await setProgress(tab.id, "…", "正在提取字幕…");
 
   try {
+    const cookieResult = await cookiePromise;
+    if (cookieResult.warning) {
+      await setProgress(tab.id, "…", cookieResult.warning);
+    }
     const response = await browser.runtime.sendNativeMessage(NATIVE_APP_ID, {
       action: "extractAndSummarize",
       jobId,
-      url
+      url,
+      cookies: cookieResult.cookies
     });
 
     if (!response?.ok) {
@@ -42,6 +49,49 @@ browser.action.onClicked.addListener(async (tab) => {
     await failJob(jobId, readableError(error));
   }
 });
+
+async function readYouTubeCookies(tab) {
+  if (!browser.permissions?.request) {
+    return { cookies: [], warning: "当前 Safari 未提供登录读取接口，将尝试普通提取" };
+  }
+  try {
+    const granted = await browser.permissions.request({ permissions: ["cookies"] });
+    if (!granted) {
+      return { cookies: [], warning: "未允许读取 YouTube 登录状态，必要时会使用 Terminal 后备" };
+    }
+    if (!browser.cookies?.getAll) {
+      return { cookies: [], warning: "当前 Safari 未提供登录读取接口，将尝试普通提取" };
+    }
+    const details = { url: "https://www.youtube.com/" };
+    if (browser.cookies.getAllCookieStores) {
+      const stores = await browser.cookies.getAllCookieStores();
+      const store = stores.find((item) => item.tabIds?.includes(tab.id));
+      if (store) details.storeId = store.id;
+    }
+    const cookies = await browser.cookies.getAll(details);
+    return { cookies: youtubeCookies(cookies), warning: "" };
+  } catch (error) {
+    return { cookies: [], warning: `无法读取 YouTube 登录状态：${readableError(error)}` };
+  }
+}
+
+function youtubeCookies(cookies) {
+  return cookies.filter((cookie) => {
+    const domain = String(cookie.domain || "").replace(/^\./, "").toLowerCase();
+    return (domain === "youtube.com" || domain.endsWith(".youtube.com")) &&
+      [cookie.domain, cookie.path, cookie.name, cookie.value].every(
+        (value) => typeof value === "string" && !/[\t\r\n]/.test(value)
+      );
+  }).slice(0, 100).map((cookie) => ({
+    domain: cookie.domain,
+    path: cookie.path,
+    name: cookie.name,
+    value: cookie.value,
+    secure: Boolean(cookie.secure),
+    httpOnly: Boolean(cookie.httpOnly),
+    expirationDate: Number.isFinite(cookie.expirationDate) ? Math.floor(cookie.expirationDate) : 0
+  }));
+}
 
 function connectNativePort() {
   try {
@@ -229,7 +279,7 @@ async function showManualFallback(tabId, reason) {
   await browser.action.setBadgeText({ tabId, text: "⌘V" });
   await browser.action.setTitle({
     tabId,
-    title: `自动提取未完成；网址已复制，原脚本已打开。请在 Terminal 按 ⌘V。原因：${reason}`
+    title: `后台提取未完成；已在 Terminal 自动继续，无需粘贴网址。原因：${reason}`
   });
 }
 

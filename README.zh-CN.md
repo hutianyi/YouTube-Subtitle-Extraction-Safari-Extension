@@ -6,7 +6,7 @@ macOS Safari 插件：提取当前 YouTube 视频字幕，复制“这期节目�
 
 ## 安装和启用
 
-当前源码版本为 **1.0.7**，应用和 Xcode 工程仍叫 **YouTube 字幕总结**。当前应用的部署目标是 **macOS 26.5**；需要 **Xcode 26.6 或更新版本**。更早系统尚未验证。
+当前源码版本为 **1.0.8**，应用和 Xcode 工程仍叫 **YouTube 字幕总结**。当前应用的部署目标是 **macOS 26.5**；需要 **Xcode 26.6 或更新版本**。更早系统尚未验证。更新内容见 [CHANGELOG](CHANGELOG.md)。
 
 1. 本机需要 `yt-dlp` 和 Python 3。如果已安装 Homebrew，可在任意目录的 Terminal 运行以下命令，安装字幕提取依赖：
 
@@ -17,32 +17,47 @@ macOS Safari 插件：提取当前 YouTube 视频字幕，复制“这期节目�
 2. 下载或克隆仓库，用 Xcode 打开 `Source/YouTube 字幕总结.xcodeproj`。
 3. 选择 **YouTube 字幕总结** 和 **My Mac**，在两个 target 的 **Signing & Capabilities** 中使用自己的本机签名设置。仓库不提供个人开发团队、证书或预签名应用。
 4. 编译并运行一次应用，在 Safari 设置 → 扩展中启用插件。未签名的开发版本需要按照 [Apple 官方说明](https://developer.apple.com/documentation/safariservices/running-your-safari-web-extension)允许未签名扩展；这会放宽开发扩展的签名检查，请只启用你信任的扩展。
-5. 按提示授予 YouTube 和 ChatGPT 网站权限。通用应用标识在各处保持一致；如自行修改，需要同时修改源码、工程和临时目录权限中的相应标识。
+5. 按提示授予 YouTube 网站访问权限。首次点击时，可选择允许 Cookie 权限，让插件仅把当前视频所在 Safari 环境的 YouTube 登录数据交给本机助手；授权范围与临时处理方式见 [隐私说明](PRIVACY.md)。ChatGPT 仅是跳转目标，插件不再请求其网站访问权限。通用应用标识在各处保持一致；如自行修改，需要同时修改源码、工程和临时目录权限中的相应标识。
+
+替换旧版本后，请完全退出并重新打开 Safari，让它重新加载扩展。
 
 仅检查源码是否可以编译的命令见 [英文说明](README.md#build-and-enable)。该命令不安装或启动插件。
 
 ## 日常使用
 
 1. 在 Safari 打开 YouTube 的具体视频播放页，或 `youtu.be` 视频链接。
-2. 点击扩展按钮，等待字幕提取。
+2. 点击扩展按钮，按需允许使用 YouTube 登录状态，等待后台提取。助手通过插件接收登录数据，无需直接读取 Safari 的受保护浏览器目录。
 3. 字幕选择顺序：英语人工字幕、英语音频识别字幕、中文人工字幕、中文音频识别字幕；再选择可用的原语言字幕，不选择机器翻译字幕。
 4. 完整提示词会替换当前剪贴板内容。如果原视频标签页仍停留在同一网址，它会跳转到 `https://chatgpt.com/`。
-5. 在 ChatGPT 输入框按 **Command-V**，检查内容后手动发送。插件不需要你的登录 Cookie、密码或令牌。
+5. 在 ChatGPT 输入框按 **Command-V**，检查内容后手动发送。插件不读取 ChatGPT 的登录 Cookie、密码或令牌，也不自动提交内容。
 
 如果原标签页已改变，会保留当前网页；此时自行打开 ChatGPT 并粘贴。
 
 ## 可选的手动后备脚本
 
-正常提取使用应用内的脚本。公开版本不绑定任何个人电脑目录，也不附带外部 `.command` 文件。
+正常提取使用应用内的脚本。公开版本不绑定任何个人电脑目录；随附的 `Scripts/manual-fallback.command` 是可选的 Terminal 后备，与内置流程共用字幕选择规则。
 
-如果你已有可信的字幕提取脚本，可以在任意目录的 Terminal 运行下列命令，将路径保存到自己的本机偏好设置。请将示例改为实际脚本位置：
+请先检查后备脚本：它会在匿名提取被拦截时，明确允许 `yt-dlp` 读取 Safari Cookie 数据库；macOS 可能要求额外的系统访问许可。若决定使用，在**仓库根目录**运行以下命令，将脚本路径保存到本机偏好设置：
 
 ```sh
 defaults write com.example.YouTubeSubtitleExtraction \
-  ManualFallbackCommandPath -string "$HOME/Scripts/YouTube字幕提取.command"
+  ManualFallbackCommandPath -string "$PWD/Scripts/manual-fallback.command"
 ```
 
-自动提取失败时，应用会复制视频网址，并打开已配置的可执行脚本；在该脚本的 Terminal 窗口粘贴网址继续。未配置有效脚本时显示提取错误。
+请把随附脚本保留在仓库的 `Scripts/` 目录。自动提取失败时，应用会把网址作为第一个参数交给后备脚本，无需再次粘贴。也可以配置自己的可信可执行脚本；要免于手动输入，它必须支持第一个参数接收视频网址。未配置有效脚本时显示提取错误。
+
+拒绝可选 Cookie 权限时，后台助手只尝试匿名提取，不会因此读取 Safari Cookie 数据库。只有用户明确配置的 Terminal 后备可选择这种独立访问方式。
+
+## 开发验证
+
+在**仓库根目录**运行以下离线检查。提取程序本身需要 Python 3；只有浏览器模拟测试需要另行已有 Node.js：
+
+```sh
+python3 Source/tests/test_subtitle_flow.py
+node Source/tests/test_background.cjs
+```
+
+测试覆盖登录数据传入、重试、权限拒绝、字幕语言选择和原标签页跳转保护，不会启动 Safari 或访问真实登录数据。
 
 ## 使用范围
 

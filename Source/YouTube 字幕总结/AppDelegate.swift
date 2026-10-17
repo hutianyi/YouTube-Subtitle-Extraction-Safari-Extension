@@ -29,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let task = claimPendingTask() {
             handledLaunchURL = true
-            startExtraction(jobID: task.jobID, videoURL: task.videoURL)
+            startExtraction(jobID: task.jobID, videoURL: task.videoURL, cookies: task.cookies ?? [])
             return
         }
 
@@ -74,12 +74,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startExtraction(jobID: jobID, videoURL: videoURL)
     }
 
-    private func startExtraction(jobID: String, videoURL: String) {
+    private func startExtraction(jobID: String, videoURL: String, cookies: [YouTubeCookie] = []) {
         guard startedJobIDs.insert(jobID).inserted else { return }
         NSLog("YouTube 字幕总结：收到任务 %@", jobID)
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.extract(jobID: jobID, videoURL: videoURL)
+            self?.extract(jobID: jobID, videoURL: videoURL, cookies: cookies)
         }
     }
 
@@ -124,7 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return nil
     }
 
-    private func extract(jobID: String, videoURL: String) {
+    private func extract(jobID: String, videoURL: String, cookies: [YouTubeCookie]) {
         let fileManager = FileManager.default
         let taskDirectory = fileManager.temporaryDirectory
             .appendingPathComponent("YouTubeSubtitleSummary-\(UUID().uuidString)", isDirectory: true)
@@ -145,12 +145,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 throw HelperError("应用内没有找到字幕提取程序。")
             }
 
+            let cookieURL = taskDirectory.appendingPathComponent("youtube-cookies.txt")
+            let cookieLines = cookies.compactMap { $0.netscapeLine }
+            if !cookieLines.isEmpty {
+                let data = Data(("# Netscape HTTP Cookie File\n" + cookieLines.joined(separator: "\n") + "\n").utf8)
+                guard fileManager.createFile(
+                    atPath: cookieURL.path, contents: data,
+                    attributes: [.posixPermissions: 0o600]
+                ) else {
+                    throw HelperError("无法准备本次提取的 YouTube 登录数据。")
+                }
+            }
+
             let process = Process()
-            let outputPipe = Pipe()
             let errorPipe = Pipe()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
             process.arguments = [scriptURL.path, videoURL, resultURL.path]
-            process.standardOutput = outputPipe
+            if !cookieLines.isEmpty { process.arguments?.append(cookieURL.path) }
+            process.standardOutput = FileHandle.nullDevice
             process.standardError = errorPipe
             process.environment = ProcessInfo.processInfo.environment.merging([
                 "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
@@ -158,9 +170,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ]) { _, new in new }
 
             try process.run()
-            process.waitUntilExit()
-
+            // 先读管道，避免子进程等待管道空间而与 waitUntilExit 相互阻塞。
             let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
             let errorText = String(data: errorData, encoding: .utf8) ?? ""
 
             guard process.terminationStatus == 0 else {
@@ -199,7 +211,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let commandPath = (configuredPath as NSString).expandingTildeInPath
             let commandURL = URL(fileURLWithPath: commandPath)
             guard FileManager.default.isExecutableFile(atPath: commandURL.path) else { return }
-            didOpen = NSWorkspace.shared.open(commandURL)
+            // 通过一次性启动脚本传入网址，Terminal 仍可使用已有的系统访问权限。
+            let launcherURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("YouTubeSubtitleFallback-\(UUID().uuidString).command")
+            let launcher = """
+            #!/bin/zsh
+            trap '/bin/rm -f -- "$0"' EXIT
+            /bin/zsh \(shellQuoted(commandURL.path)) \(shellQuoted(videoURL))
+            """
+            do {
+                try launcher.write(to: launcherURL, atomically: true, encoding: .utf8)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o700], ofItemAtPath: launcherURL.path
+                )
+                didOpen = NSWorkspace.shared.open(launcherURL)
+                if !didOpen { try? FileManager.default.removeItem(at: launcherURL) }
+            } catch {
+                try? FileManager.default.removeItem(at: launcherURL)
+                NSLog("YouTube 字幕总结：无法准备后备启动程序：%@", error.localizedDescription)
+            }
         }
         return didOpen
     }
@@ -301,10 +331,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 private struct PendingTask: Decodable {
     let jobID: String
     let videoURL: String
+    let cookies: [YouTubeCookie]?
 
     private enum CodingKeys: String, CodingKey {
         case jobID = "jobId"
         case videoURL = "url"
+        case cookies
     }
 }
 
@@ -349,4 +381,29 @@ private func split(_ text: String, maximumCharacters: Int) -> [String] {
         start = end
     }
     return chunks
+}
+
+private func shellQuoted(_ value: String) -> String {
+    "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+}
+
+private struct YouTubeCookie: Decodable {
+    let domain: String
+    let path: String
+    let name: String
+    let value: String
+    let secure: Bool
+    let httpOnly: Bool
+    let expirationDate: Int
+
+    var netscapeLine: String? {
+        let host = domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard host == "youtube.com" || host.hasSuffix(".youtube.com"),
+              [domain, path, name, value].allSatisfy({ $0.rangeOfCharacter(from: CharacterSet(charactersIn: "\t\r\n")) == nil })
+        else { return nil }
+        let cookieDomain = (httpOnly ? "#HttpOnly_" : "") + domain
+        return [cookieDomain, domain.hasPrefix(".") ? "TRUE" : "FALSE",
+                path, secure ? "TRUE" : "FALSE", String(max(0, expirationDate)), name, value]
+            .joined(separator: "\t")
+    }
 }

@@ -61,10 +61,36 @@ trap 'rm -rf -- "$TEMP_DIR"' EXIT HUP INT TERM
 METADATA_FILE="$TEMP_DIR/metadata.json"
 ERROR_FILE="$TEMP_DIR/yt-dlp-error.txt"
 
+# 普通后台任务仅使用 Safari 插件授权传入的登录数据。
+# 手动后备可显式选择从 Safari 读取登录状态并重试一次。
+# 登录数据仅供本次提取使用，不持久保存浏览器 Cookie。
+COOKIE_ARGS=()
+# Safari 插件仅传入 YouTube 域的本次登录数据，避免助手读取浏览器的受保护目录。
+if [[ -n "${3:-}" && -f "$3" ]]; then
+  COOKIE_ARGS=(--cookies "$3")
+fi
+run_ytdlp() {
+  local output_file="$TEMP_DIR/yt-dlp-output.txt"
+  "$YTDLP" "${COOKIE_ARGS[@]}" "$@" >"$output_file" 2>"$ERROR_FILE"
+  local exit_code=$?
+  if [[ "${YTSUB_ALLOW_SAFARI_COOKIE_FALLBACK:-0}" == "1" ]] && \
+    (( exit_code != 0 )) && (( ${#COOKIE_ARGS[@]} == 0 )) && \
+    /usr/bin/grep -Eiq 'not a bot|sign in|login required|authentication|HTTP Error (401|403|429)|Use --cookies' "$ERROR_FILE"; then
+    COOKIE_ARGS=(--cookies-from-browser safari)
+    print -u2 -- "正在使用 Safari 登录状态重试字幕提取……"
+    "$YTDLP" "${COOKIE_ARGS[@]}" "$@" >"$output_file" 2>"$ERROR_FILE"
+    exit_code=$?
+  fi
+  if (( exit_code == 0 )); then
+    /bin/cat "$output_file"
+  fi
+  return "$exit_code"
+}
+
 print ""
 print "正在读取视频字幕信息……"
 
-if ! "$YTDLP" \
+if ! run_ytdlp \
   --ignore-config \
   --no-playlist \
   --skip-download \
@@ -73,7 +99,7 @@ if ! "$YTDLP" \
   --socket-timeout 20 \
   --retries 3 \
   --extractor-args "youtube:skip=translated_subs" \
-  "$VIDEO_URL" >"$METADATA_FILE" 2>"$ERROR_FILE"; then
+  "$VIDEO_URL" >"$METADATA_FILE"; then
   SHORT_ERROR="$(sed -n 's/^ERROR: */ /p' "$ERROR_FILE" | tail -n 1)"
   if [[ -n "$SHORT_ERROR" ]]; then
     fail "YouTube、网络或 yt-dlp 出错：${SHORT_ERROR# }"
@@ -266,7 +292,7 @@ if [[ "$SUB_KIND" == "automatic" ]]; then
   SUB_OPTIONS=(--write-auto-subs)
 fi
 
-if ! "$YTDLP" \
+if ! run_ytdlp \
   --ignore-config \
   --no-playlist \
   --skip-download \
@@ -279,7 +305,7 @@ if ! "$YTDLP" \
   --sub-langs "$SUB_PATTERN" \
   --sub-format "json3/vtt/best" \
   -o "$TEMP_DIR/subtitle.%(ext)s" \
-  "$VIDEO_URL" 2>"$ERROR_FILE"; then
+  "$VIDEO_URL"; then
   SHORT_ERROR="$(sed -n 's/^ERROR: */ /p' "$ERROR_FILE" | tail -n 1)"
   if [[ -n "$SHORT_ERROR" ]]; then
     fail "字幕下载失败：${SHORT_ERROR# }"
