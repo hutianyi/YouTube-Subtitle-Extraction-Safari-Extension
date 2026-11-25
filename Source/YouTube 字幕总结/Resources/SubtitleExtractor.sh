@@ -94,6 +94,7 @@ if ! run_ytdlp \
   --ignore-config \
   --no-playlist \
   --skip-download \
+  --ignore-no-formats-error \
   --dump-single-json \
   --no-warnings \
   --socket-timeout 20 \
@@ -296,6 +297,7 @@ if ! run_ytdlp \
   --ignore-config \
   --no-playlist \
   --skip-download \
+  --ignore-no-formats-error \
   --quiet \
   --no-warnings \
   --socket-timeout 20 \

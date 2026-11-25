@@ -18,6 +18,9 @@ metadata = '--dump-single-json' in args
 with open(os.environ['TEST_CALLS'], 'a') as log:
     log.write(json.dumps({'metadata': metadata, 'cookies': cookies, 'browser_access': '--cookies-from-browser' in args}) + '\\n')
 mode = os.environ['TEST_MODE']
+if mode == 'captions_without_media' and '--ignore-no-formats-error' not in args:
+    print('ERROR: Requested format is not available.', file=sys.stderr)
+    sys.exit(1)
 if (mode in ('auth', 'denied') and metadata and not cookies) or (mode == 'subtitle_auth' and not metadata and not cookies):
     print('partial response')
     print('ERROR: Sign in to confirm you are not a bot', file=sys.stderr)
@@ -73,6 +76,14 @@ class SubtitleFlowTests(unittest.TestCase):
         result, calls, transcript = self.run_flow('success')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([c['cookies'] for c in calls], [False,False])
+        self.assertEqual(transcript, 'English transcript.\n')
+
+    def test_captions_without_downloadable_media(self):
+        result, calls, transcript = self.run_flow(
+            'captions_without_media', forwarded=True, legacy=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call['metadata'] for call in calls], [True, False])
         self.assertEqual(transcript, 'English transcript.\n')
 
     def test_auth_retry_cleans_partial_output_and_keeps_login_for_download(self):
